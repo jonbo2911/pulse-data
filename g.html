@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E1211">
+<meta name="robots" content="noindex">
+<title>A Pulse group</title>
+<meta property="og:title" content="A group of events on Pulse">
+<meta property="og:description" content="Up to five picks a friend shared with you. Vote for the ones you'd go to.">
+<link rel="icon" href="icon.png"><link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:image" content="https://jonbo2911.github.io/pulse-data/icon.png"><meta property="og:site_name" content="Pulse">
+<link rel="stylesheet" href="share.css">
+</head>
+<body>
+<main id="app"><p class="empty">Loading…</p></main>
+<script src="share.js"></script>
+<script>
+  const { esc, safeURL, color, payload, mark, bg, calendar, rpc, store, keep } = Pulse;
+  const app = document.getElementById("app");
+  let g, events, token, tallies = {};
+  const voter = store("pulse.voter", () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 14) + Date.now()));
+
+  function render() {
+    const pics = events.filter(e => safeURL(e.i)).slice(0, 3);
+    const counts = Object.values(tallies).map(t => t.votes);
+    const best = Math.max(0, ...counts);
+    const lead = best > 0 && counts.filter(c => c === best).length === 1 ? Object.values(tallies).find(t => t.votes === best).event_id : null;
+    app.innerHTML = `
+      <section class="head">
+        ${mark}
+        <div class="kicker">PICKED IN ${esc((g.c || "").toUpperCase())}</div>
+        <h1>${esc(g.n)}</h1>
+        <div class="sub">${events.length} event${events.length === 1 ? "" : "s"} a friend picked. ${token ? "Vote for the ones you'd go to." : ""}</div>
+        ${pics.length ? `<div class="strip">${pics.map(e => `<div style="${bg(e)}"></div>`).join("")}</div>` : ""}
+        ${token ? `<div class="name"><input id="name" maxlength="40" placeholder="Your name (shown to the group)"
+            value="${esc(store("pulse.name") || "")}"></div>` : ""}
+      </section>
+      <section class="list">
+        ${events.map((e, n) => {
+          const t = tallies[e.x] || {}, mine = !!t.mine;
+          const names = (t.names || []).slice(0, 3).join(", ");
+          return `
+          <div class="ev">
+            <div class="img" style="${bg(e)}"></div>
+            <div class="body"><b>${esc(e.t)}${lead && lead === e.x ? `<span class="lead">Most votes</span>` : ""}</b>
+              <div class="when" style="color:${color(e.k)}">${esc(e.d)}</div>
+              <div class="where">${esc(e.v || "")}</div>
+              ${token && e.x ? `<div class="votes">${t.votes ? `${t.votes} vote${t.votes === 1 ? "" : "s"}${names ? ` · ${esc(names)}` : ""}` : "No votes yet"}</div>` : ""}
+              <div class="tools">
+                ${token && e.x ? `<button class="chip ${mine ? "on" : ""}" data-vote="${n}">${mine ? "✓ I'm in" : "I'd go"}</button>` : ""}
+                ${safeURL(e.u) ? `<a class="chip" href="${esc(e.u)}" target="_blank" rel="noopener">Tickets</a>` : ""}
+                ${e.s || e.y ? `<button class="chip" data-cal="${n}">Add to calendar</button>` : ""}
+              </div>
+            </div>
+          </div>`; }).join("")}
+      </section>
+      ${/^mypulse:\/\/group\?t=[0-9a-f]+$/.test(g.j || "") ? `<a class="get" href="${esc(g.j)}">Join in Pulse</a>` : ""}
+      <p class="note">Dates as shared; check the organiser's page before you go.</p>`;
+    app.querySelectorAll("[data-cal]").forEach(b => b.addEventListener("click", () => calendar(events[+b.dataset.cal])));
+    app.querySelectorAll("[data-vote]").forEach(b => b.addEventListener("click", () => vote(events[+b.dataset.vote], b)));
+    document.getElementById("name")?.addEventListener("change", ev => keep("pulse.name", ev.target.value.trim()));
+  }
+
+  async function load() {
+    try {
+      const rows = await rpc("group_votes", { token, voter });
+      tallies = Object.fromEntries(rows.map(r => [r.event_id, r]));
+    } catch (_) { tallies = {}; }
+  }
+
+  async function vote(e, button) {
+    button.disabled = true;
+    const name = (document.getElementById("name")?.value || "").trim();
+    keep("pulse.name", name);
+    try {
+      const ok = await rpc("vote_in_group", { token, event: e.x, voter, voter_name: name || null, yes: !(tallies[e.x] || {}).mine });
+      if (ok) await load();
+    } catch (_) { /* voting unavailable: the list still works */ }
+    render();
+  }
+
+  const slug = id => id.replace(/:/g, "--").replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 120);
+  const cityName = c => ({ sansebastian: "San Sebastián", clermont: "Clermont-Ferrand", montreal: "Montréal" })[c]
+    || c.charAt(0).toUpperCase() + c.slice(1);
+
+  // A short link (g.html?t=<code>): the group from the server, each event from its own page.
+  async function fromServer(t) {
+    const rows = await rpc("group_by_token", { token: t });
+    if (!rows.length) throw new Error("no group");
+    const row = rows[0];
+    const items = await Promise.all((row.event_ids || []).slice(0, 5).map(async id => {
+      try {
+        const html = await (await fetch(`e/${row.city}/${slug(id)}.html`)).text();
+        const json = new DOMParser().parseFromString(html, "text/html").getElementById("data")?.textContent;
+        return json ? JSON.parse(json).e : null;
+      } catch (_) { return null; }   // an event that has ended has no page any more
+    }));
+    return { n: row.name, c: cityName(row.city), e: items.filter(Boolean), j: `mypulse://group?t=${t}` };
+  }
+
+  (async () => {
+    try {
+      const t = new URLSearchParams(location.search).get("t");
+      g = t && /^[0-9a-f]+$/.test(t) ? await fromServer(t) : payload();
+      events = (g.e || []).slice(0, 5);
+      token = ((g.j || "").match(/^mypulse:\/\/group\?t=([0-9a-f]+)$/) || [])[1] || null;
+      document.title = `${g.n} · Pulse`;
+      render();
+      if (token) load().then(render);
+    } catch (_) {
+      app.innerHTML = `<p class="empty">This group link looks incomplete. Ask your friend to share it again.</p>`;
+    }
+  })();
+</script>
+</body>
+</html>
