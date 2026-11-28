@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E1211">
+<meta name="robots" content="noindex">
+<title>A list on Pulse</title>
+<meta property="og:title" content="A list of events shared on Pulse">
+<meta property="og:description" content="Things to do, picked on Pulse.">
+<link rel="icon" href="icon.png"><link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:image" content="https://jonbo2911.github.io/pulse-data/icon.png"><meta property="og:site_name" content="Pulse">
+<link rel="stylesheet" href="share.css">
+</head>
+<body>
+<main id="app"><p class="empty">Loading…</p></main>
+<script src="share.js"></script>
+<script>
+  const { esc, safeURL, color, payload, mark, bg, calendar } = Pulse;
+  const app = document.getElementById("app");
+  try {
+    const p = payload(), events = (p.e || []).slice(0, 10);
+    document.title = `${p.n} · Pulse`;
+    const pics = events.filter(e => safeURL(e.i)).slice(0, 3);
+    app.innerHTML = `
+      <section class="head">
+        ${mark}
+        <div class="kicker">${esc((p.c || "").toUpperCase())}</div>
+        <h1>${esc(p.n)}</h1>
+        <div class="sub">${events.length} event${events.length === 1 ? "" : "s"}, found on Pulse.</div>
+        ${pics.length ? `<div class="strip">${pics.map(e => `<div style="${bg(e)}"></div>`).join("")}</div>` : ""}
+      </section>
+      <section class="list">
+        ${events.map((e, n) => `
+          <div class="ev">
+            <div class="img" style="${bg(e)}"></div>
+            <div class="body"><b>${esc(e.t)}</b>
+              <div class="when" style="color:${color(e.k)}">${esc(e.d)}</div>
+              <div class="where">${esc(e.v || "")}${e.p ? ` · ${esc(e.p)}` : ""}</div>
+              <div class="tools">
+                ${safeURL(e.u) ? `<a class="chip" href="${esc(e.u)}" target="_blank" rel="noopener">Tickets & info</a>` : ""}
+                ${e.s || e.y ? `<button class="chip" data-cal="${n}">Add to calendar</button>` : ""}
+              </div>
+            </div>
+          </div>`).join("")}
+      </section>
+      <p class="note">Dates as shared; check the organiser's page before you go.</p>`;
+    app.querySelectorAll("[data-cal]").forEach(b => b.addEventListener("click", () => calendar(events[+b.dataset.cal])));
+  } catch (_) {
+    app.innerHTML = `<p class="empty">This link looks incomplete. Ask your friend to share it again.</p>`;
+  }
+</script>
+</body>
+</html>
